@@ -1,38 +1,31 @@
-# Mini-Genie: Unsupervised Action Discovery in Sequential Social Dilemmas
+# Mini-Genie: Unsupervised Generative World Model
 
-## Project Overview
-This project is a technical implementation of a Generative World Model (GWM) applied to Multi-Agent Reinforcement Learning environments, specifically the **Commons Game** (Sequential Social Dilemma).
+![Dream Sequence](assets/dream_real_data.gif)
+*Figure 1: The model "dreaming" future states purely from latent space (Generative Transformer), maintaining object permanence without access to the game engine.*
 
-Inspired by DeepMind's **Genie** (2024), the goal is to learn a latent action space and environment dynamics purely from unlabeled video data, effectively discovering concepts like "Harvesting" or "Zapping" without supervision.
+## 🧠 Technical Deep Dive
 
-## 🚀 The Pipeline
+This project implements a **Latent Action Model (LAM)** inspired by DeepMind's *Genie* (2024), capable of learning the physics and controls of a Multi-Agent Reinforcement Learning environment entirely from unlabeled video.
 
-The architecture follows a strict 3-stage pipeline designed to handle the complexity of small objects (apples) and mode collapse in action discovery.
+### Architecture & Key Challenges solved
 
-### 1. Data Collection (`collect_data.py`)
-- **Environment:** Harvest (Commons Game).
-- **Agent Policy:** Implemented a custom **Heuristic Greedy Agent** using computer vision logic to force causal interactions (resource consumption). Random agents failed to trigger scarcity dynamics.
-- **Volume:** 50,000 frames (RGB, 64x64).
+#### 1. The Tokenizer (VQ-VAE) with Spatial Focus
+Standard VQ-VAEs failed to reconstruct the single-pixel "apples" in the *Harvest* environment due to the dominance of the black background.
+* **Solution:** Implemented a custom **Spatial Weighted L1 Loss** that penalizes reconstruction errors on non-background pixels by a factor of 20x.
+* **Result:** High-fidelity tokenization of sparse reward objects.
 
-### 2. Spatiotemporal Compression (`train_vqvae.py`)
-- **Model:** VQ-VAE with Residual Blocks.
-- **Challenge:** "Posterior Collapse" where small objects (apples) vanished during compression.
-- **Solution:** - Implemented a **High-Res Latent Space (16x16)** instead of the standard 8x8.
-    - Designed a **Spatial Weighted L1 Loss** that penalizes errors on non-background pixels by a factor of 20x.
-- **Result:** High-fidelity reconstruction of small, single-pixel resources.
+#### 2. The Dynamics Model (Transformer)
+Transitioned from an MLP-based predictor to a **Causal Transformer** to capture temporal dependencies.
+* **Challenge:** "Gray Soup" hallucination due to stochastic uncertainty in early training.
+* **Solution:** Implemented **Greedy Decoding (Determininstic Sampling)** during inference to stabilize video generation, proving the model learned distinct concepts of "Object Permanence" (walls and resources persist over time).
 
-### 3. Latent Action Discovery (`train_lam_dynamics.py`)
-- **Model:** Latent Action Model (LAM) + Dynamics Predictor.
-- **Challenge:** "Mode Collapse". The model initially mapped all transitions to a single latent action to minimize loss safely.
-- **Solution:** Introduced **Entropy Regularization** ($\lambda=0.1$) to the loss function, maximizing the entropy of the average action distribution.
-- **Result:** Successfully disentangled distinct latent behaviors unsupervised.
+#### 3. Latent Action Discovery
+Used an Inverse Dynamics Model to cluster continuous video transitions into discrete latent actions.
+* **Insight:** The model successfully disentangled "Movement" dynamics from "Interaction" dynamics (zapping/shooting), grouping them into distinct latent clusters unsupervised.
 
-## 🛠️ Installation & Usage
+## 🛠️ Tech Stack
+* **Core:** PyTorch, Gym (Legacy), NumPy.
+* **Models:** VQ-VAE (Residual), Transformer (GPT-style Decoder).
+* **Vis:** Matplotlib, Seaborn (Confusion Matrices).
 
-### Prerequisites
-The project uses specific legacy versions to ensure compatibility with the `gym==0.21` environment.
-
-```bash
-pip install "gym==0.21.0" "numpy<1.24" "scikit-image<0.20"
-pip install torch torchvision
-pip install "pandas<2.0" "seaborn<0.12" "scikit-learn<1.3" "matplotlib<3.8"
+---
