@@ -23,18 +23,18 @@ rm -f data/artifacts/world_model_transformer.pth
 # Note: We KEEP the VQ-VAE (eyes) because it works fine.
 echo "   Done. Old brains removed."
 
-# STEP 2: GENERATE NEW DATA (TOKENS)
- echo "🔄 Step 2: Tokenizing NEW active data..."
-# Added -u to see progress in real-time
-$PYTHON_EXEC -u src/tokenize_data.py
+# 1. Tokenize Data (Uses the VQ-VAE to convert images to codebook indices)
+echo "--- Step 1: Tokenizing Episodes ---"
+python src/tokenize_data.py
 
-# STEP 3: TRAIN WITH ENTROPY REGULARIZATION
-echo "🚀 Step 3: Training Transformer Dynamics (Entropy Regularization)..."
-$PYTHON_EXEC -u src/train_transformer_dynamics.py
+# 2. Train Transformer Dynamics (The "Brain")
+echo "--- Step 2: Training Transformer Dynamics (Window size = 4) ---"
+python src/train_transformer_dynamics.py
 
-# STEP 4: VISUALIZE RESULTS
-echo "🎨 Step 4: Generating final visualizations (t-SNE & GIF)..."
-$PYTHON_EXEC -u src/visualize_tsne.py
+# 3. Visualization (t-SNE and Dreams)
+echo "--- Step 3: Generating Visualizations ---"
+python src/visualize_tsne.py
+python src/generate_dream_gif.py
 
 echo "----------------------------------------------------------------"
 echo "✅ PIPELINE FINISHED"

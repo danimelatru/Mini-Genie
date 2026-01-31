@@ -24,6 +24,9 @@ except ImportError:
         sys.exit(1)
 
 # --- CONFIG ---
+BATCH_SIZE = 64
+WINDOW_SIZE = 4
+VOCAB_SIZE = 512
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PROJECT_ROOT = Path(__file__).parent.parent
 DATA_PATH = PROJECT_ROOT / "data" / "tokens"
@@ -83,27 +86,15 @@ def main():
         action_net.load_state_dict(torch.load(ARTIFACTS_PATH / "action_net_transformer.pth", map_location=DEVICE))
     except FileNotFoundError:
         print("Model not found. Skipping t-SNE.")
-        return
-    action_net.eval()
+        dataset = TokenTransitionsDataset(DATA_PATH, window_size=WINDOW_SIZE, limit=5000)
+    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False)
     
-    # 3. Extract Latents
-    print("Extracting features from samples...")
-    latents = []
-    real_labels = []
-    pred_labels = []
+    print(f"Extracting latents for {len(dataset)} sequences...")
+    
+    all_latents = []
+    all_actions = []
     
     with torch.no_grad():
-        for i, (z_t, z_next, real_act) in enumerate(dataloader):
-            z_t, z_next = z_t.to(DEVICE), z_next.to(DEVICE)
-            
-            # Get logits/probs which represent the "Action Cluster"
-            logits = action_net(z_t, z_next)
-            probs = torch.softmax(logits, dim=1)
-            preds = torch.argmax(probs, dim=1)
-            
-            latents.append(probs.cpu().numpy())
-            
-            # 'real_act' comes as (Batch, 1), we need (Batch,) for Pandas
             real_labels.extend(real_act.view(-1).cpu().numpy())
             pred_labels.extend(preds.view(-1).cpu().numpy())
             

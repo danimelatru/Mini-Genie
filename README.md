@@ -1,33 +1,37 @@
 # Mini-Genie: Latent Action World Models 🧞‍♂️
 
-A generative World Model that learns to play and simulate **MiniGrid** environments from pixels, without access to ground-truth actions.
-
-This project implements a **VQ-VAE** to compress visual observations into discrete tokens and a **Transformer Dynamics Model** to discover latent actions and predict future states (dreams) using **Entropy Regularization**.
+A generative World Model that learns to play and simulate **MiniGrid** environments from pixels, without access to ground-truth actions. Inspired by the Google Genie paper, this implementation uses a causal transformer to discover latent physical actions and simulate future trajectories.
 
 ---
 
 ## 🧠 Architecture
 
-1. **The Eyes (VQ-VAE)**  
-   Compresses 64×64 game frames into a 16×16 grid of discrete tokens.
+The system consists of three main components designed for visual understanding and temporal reasoning:
 
-2. **The Brain (Transformer)**  
-   Learns the physics of the world. It infers *latent actions* (e.g., Left, Right, Forward) purely by observing state transitions, clustering them via entropy regularization.
+1.  **The Eyes (VQ-VAE with EMA)**
+    Compresses 64×64 game frames into a 16×16 grid of discrete tokens.
+    -   **Improvement**: Uses **Exponential Moving Average (EMA)** and codebook resetting to prevent cluster collapse, resulting in significantly sharper and more stable reconstructions.
+    -   **Loss Enhancement**: Combines MSE with **LPIPS (Perceptual Loss)** to preserve fine-grained details of the agent and environment.
 
-3. **The Dream (Generative Loop)**  
-   Autoregressively hallucinates consistent future trajectories by feeding predictions back into the model.
+2.  **The Brain (Sliding-Window Transformer)**
+    Learns the world's dynamics by observing frame sequences.
+    -   **Temporal Context**: Instead of simple transitions, the model now uses a **Context Window (W=4)**. This allows the transformer to understand velocity, direction, and long-term dependencies.
+    -   **Latent Action Discovery**: An `ActionRecognitionNet` infers actions from state changes ($z_t, z_{t+1}$), and the dynamics model uses these discovered concepts to "dream" consistent futures.
+
+3.  **The Dream (Autoregressive Generator)**
+    Hallucinates future frames by sliding its temporal window forward. By feeding its own discrete predictions back into the transformer, the model can simulate long trajectories purely from imagination.
 
 ---
 
 ## 📊 Results
 
-### 1. Latent Action Discovery (t-SNE)
-The model successfully separates agent behaviors into distinct action clusters in a fully unsupervised way.
+### 1. Latent Action Discovery
+The model successfully clusters agent behaviors (turning, moving forward) into distinct latent categories using entropy regularization.
 
 ![t-SNE Latent Space](assets/action_latent_space_tsne.png)
 
 ### 2. Dreaming the Future
-An example of the agent “dreaming” a trajectory by predicting 50 future frames from a single initial observation.
+Example of the agent “dreaming” a 50-frame trajectory. Note the temporal consistency achieved through the windowed context.
 
 ![Dream GIF](assets/dream_real_data.gif)
 
@@ -46,29 +50,24 @@ pip install gym-minigrid
 
 ---
 
-### 2. Data Collection
+### 2. Full Training Pipeline
 
-Record 1,000 active episodes where the agent explores the environment:
-
-```bash
-python src/record_active_data.py
-```
-
----
-
-### 3. Training Pipeline (End-to-End)
-
-This script tokenizes the data, trains the Transformer dynamics model, and generates visualizations:
+The project follows a staged training approach. You can run the entire pipeline with a single command:
 
 ```bash
-sbatch scripts/fix_and_train.sh
+bash scripts/fix_and_train.sh
 ```
 
-(Optional) Retrain the VQ-VAE (vision module) if generated dreams appear blurry or gray:
+This script performs the following:
+1.  **Tokenization**: Converts raw pixel data into discrete VQ-VAE tokens.
+2.  **Dynamics Training**: Trains the Transformer using windowed sequences.
+3.  **Visualization**: Generates t-SNE plots and the "dream" GIF.
 
-```bash
-sbatch scripts/retrain_vision.sh
-```
+### 3. Manual Steps (Optional)
+
+-   **Record Data**: `python src/record_active_data.py` (Default: 1000 episodes).
+-   **Train Vision**: `python src/train_vqvae.py` (If you need to improve visual sharpness).
+-   **Train Brain**: `python src/train_transformer_dynamics.py`.
 
 ---
 
@@ -76,38 +75,29 @@ sbatch scripts/retrain_vision.sh
 
 ```text
 mini-genie/
-├── data/                  # Datasets and Artifacts
-│   ├── episodes/          # Raw .npz game recordings (1000 files)
+├── data/                  # Datasets and Artifacts (Ignored by git)
+│   ├── episodes/          # Raw .npz game recordings
 │   ├── tokens/            # Tokenized episodes (VQ-VAE output)
 │   └── artifacts/         # Saved models (.pth), plots, and GIFs
 ├── src/
-│   ├── record_active_data.py       # 1. Generates raw game data (MiniGrid)
-│   ├── train_vqvae.py              # 2. Trains the "Eyes" (Visual Compressor)
-│   ├── tokenize_data.py            # 3. Converts images to discrete tokens
-│   ├── train_transformer_dynamics.py # 4. Trains the "Brain" (World Model)
-│   ├── visualize_tsne.py           # 5. Analysis: Plots the Brain's latent concepts
-│   └── generate_dream_gif.py       # 6. Visualization: Generates the dream video
+│   ├── record_active_data.py       # 1. Environment interaction & data collection
+│   ├── train_vqvae.py              # 2. Visual Compressor (VQ-VAE + EMA)
+│   ├── tokenize_data.py            # 3. Off-line data tokenization
+│   ├── train_transformer_dynamics.py # 4. World Model (Windowed Transformer)
+│   ├── visualize_tsne.py           # 5. Latent Action Analysis
+│   └── generate_dream_gif.py       # 6. Autoregressive Simulation
 └── scripts/               
-    ├── fix_and_train.sh            # Main pipeline (Tokenize -> Train -> Viz)
-    └── retrain_vision.sh           # Optional: Retrain VQ-VAE only
+    └── fix_and_train.sh            # Complete end-to-end pipeline
 ```
 
 ---
 
-## 🏁 Final Steps
+## 🛠 Advanced Configuration
 
-1. **Delete** unnecessary intermediate files to clean the workspace.
-2. **Edit `src/record_active_data.py`**: set `TOTAL_EPISODES = 1000`.
-3. **Edit `src/train_transformer_dynamics.py`**: set `EPOCHS = 30`.
-4. **Run** data collection:
-   ```bash
-   python src/record_active_data.py
-   ```
-   (≈10–20 minutes)
-5. **Run** training:
-   ```bash
-   sbatch scripts/fix_and_train.sh
-   ```
-   (≈3 hours)
+In `src/train_transformer_dynamics.py`, you can tune the following:
+-   `WINDOW_SIZE`: Number of frames the model "remembers".
+-   `ENTROPY_WEIGHT`: Controls how "spread out" the discovered actions are.
+-   `HIDDEN_DIM`: Main capacity of the world model transformer.
 
-Go get that 1000-episode model — this will be the definitive version. 🚀
+> [!NOTE]
+> Training with 1000 episodes and 30 epochs is recommended for consistent physics discovery.

@@ -8,11 +8,13 @@ from pathlib import Path
 import sys
 
 # --- CONFIG ---
+WINDOW_SIZE = 4 # Match the one in train_transformer_dynamics.py
+VOCAB_SIZE = 512
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PROJECT_ROOT = Path(__file__).parent.parent
 DATA_PATH = PROJECT_ROOT / "data" / "tokens"
 ARTIFACTS_PATH = PROJECT_ROOT / "data" / "artifacts"
-DREAM_LENGTH = 50       
+DREAM_STEPS = 50       
 DREAM_ACTION_IDX = 0    
 TEMPERATURE = 1.0       
 TOP_K = 50              
@@ -22,7 +24,7 @@ def sample_top_k(logits, k, temperature):
     out = logits.clone()
     out[out < v[..., [-1]]] = -float('Inf')
     probs = F.softmax(out / temperature, dim=-1)
-    flat_probs = probs.view(-1, 512)
+    flat_probs = probs.view(-1, VOCAB_SIZE)
     sample = torch.multinomial(flat_probs, 1)
     return sample.view(logits.shape[:-1])
 
@@ -32,56 +34,66 @@ def generate_gif(vqvae, world_model):
     vqvae.eval()
     world_model.eval()
     
-    # 1. Load Seed
-    token_files = sorted(list(DATA_PATH.glob("*.npy")))
-    if not token_files:
-        print("Error: No tokens found.")
-        return
-
-    try:
-        start_tokens = np.load(token_files[0]) 
-        # Ensure we have (1, 16, 16)
-        z_t = torch.LongTensor(start_tokens[0]).unsqueeze(0).to(DEVICE) 
-    except Exception as e:
-        print(f"Error loading seed: {e}")
-        return
-
-    dream_tokens = [z_t]
+    # --- DREAM LOOP ---
+    print(f"Dreaming {DREAM_STEPS} steps...")
     
-    # 2. Dream Loop
-    print(f"Dreaming {DREAM_LENGTH} frames...")
-    with torch.no_grad():
-        for i in range(DREAM_LENGTH):
-            action = torch.zeros(1, 8).to(DEVICE)
-            valid_action = min(DREAM_ACTION_IDX, 7) 
-            action[0, valid_action] = 1.0 
+    # We need a starting window of frames
+    # Let's take the first WINDOW_SIZE frames from an episode
+    episode_files = sorted(list(DATA_PATH.glob("*.npz")))
+    if not episode_files:
+        print("No episodes found to dream from.")
+        return
+        
+    with np.load(episode_files[0]) as data:
+        frames = data['frames'][:WINDOW_SIZE] # (W, 64, 64, 3)
+        real_actions = data['action']
+
+    # Encode initial window
+    frames_torch = torch.from_numpy(frames).permute(0, 3, 1, 2).float().to(DEVICE) / 255.0
+    z = vqvae.encoder(frames_torch)
+    z = vqvae._pre_vq_conv(z)
+    _, _, z_indices = vqvae.vq_layer(z)
+    z_indices = z_indices.view(WINDOW_SIZE, 16, 16) # (W, 16, 16)
+    
+    current_window = z_indices.clone().unsqueeze(0) # (1, W, 16, 16)
+    
+    history_z = [z_indices[i].cpu().numpy() for i in range(WINDOW_SIZE)]
+
+    for t in range(DREAM_STEPS):
+        # 1. Choose Action (Use real action from trajectory if available, else random)
+        if t + WINDOW_SIZE < len(real_actions):
+            act = real_actions[t + WINDOW_SIZE]
+        else:
+            act = np.random.choice([1, 2, 3]) # Move/Turn
             
-            logits = world_model(z_t, action)
-            z_next = sample_top_k(logits, TOP_K, TEMPERATURE)
-            dream_tokens.append(z_next)
-            z_t = z_next
+        act_onehot = torch.zeros(1, 8, device=DEVICE)
+        act_onehot[0, act] = 1.0
+        
+        # 2. Predict next tokens from window
+        with torch.no_grad():
+            logits = world_model(current_window, act_onehot) # (1, 16, 16, VOCAB_SIZE)
+            next_z = torch.argmax(logits, dim=-1) # (1, 16, 16)
+        
+        # 3. Update window (Slide)
+        current_window = torch.cat([current_window[:, 1:], next_z.unsqueeze(1)], dim=1)
+        history_z.append(next_z.squeeze().cpu().numpy())
 
-    # 3. Decode Dream
-    print("Decoding dream tokens to pixels using VQ-VAE...")
-    dream_seq = torch.cat(dream_tokens, dim=0) 
-    
+    # --- RECONSTRUCT ---
+    print("Reconstructing frames...")
     decoded_frames = []
-    batch_size = 10
-    
-    with torch.no_grad():
-        for i in range(0, len(dream_seq), batch_size):
-            batch_indices = dream_seq[i : i + batch_size] 
-            
-            # --- FINAL FIX: USE _embedding (WITH UNDERSCORE) ---
-            # Based on your train_vqvae.py line 74: self._embedding = ...
-            z_q = vqvae.vq_layer._embedding(batch_indices) # (B, 16, 16, 64)
-            
-            z_q = z_q.permute(0, 3, 1, 2)
-            recon = vqvae.decoder(z_q)
-            
-            recon = recon.permute(0, 2, 3, 1).cpu().numpy()
-            recon = (np.clip(recon, 0, 1) * 255).astype(np.uint8)
-            decoded_frames.extend([frame for frame in recon])
+    for tz in history_z:
+        with torch.no_grad():
+            # Get embedding from codebook
+            # tz: (16, 16)
+            tz_torch = torch.from_numpy(tz).to(DEVICE).long().view(1, -1)
+            # Use vq_layer.embedding directly
+            # quantized = vqvae.vq_layer._embedding(tz_torch).view(1, 16, 16, 64).permute(0, 3, 1, 2)
+            # The above might be private, let's check vqvae definition
+            # In our updated VQVAE: self.embedding (public)
+            quantized = vqvae.vq_layer.embedding(tz_torch).view(1, 16, 16, 64).permute(0, 3, 1, 2)
+            recon = vqvae.decoder(quantized)
+            img = (recon.squeeze().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+            decoded_frames.append(img)
 
     # 4. Save GIF
     save_path = ARTIFACTS_PATH / "dream_real_data.gif"

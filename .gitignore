@@ -1,18 +1,49 @@
+# OS files
+.DS_Store
+Thumbs.db
+
 # Conda environment
 env/
 */env/
+.env
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# Datasets
+# Datasets & Artifacts
 data/
 datasets/
 *.npz
 *.npy
+*.pth
 *.pt
+*.checkpoint
+
+# Vision/Results (Keep small assets, ignore large generated ones if necessary)
+# assets/
+!assets/*.png
+!assets/*.gif
 
 # Logs
 logs/
@@ -26,5 +57,8 @@ notebooks/
 slurm-*.out
 slurm-*.err
 
-# VSCode
+# VSCode / IDE
 .vscode/
+.idea/
+*.swp
+*.swo
